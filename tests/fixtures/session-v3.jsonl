@@ -1,0 +1,4 @@
+{"type":"session","version":3,"id":"session-v3","timestamp":"2026-09-19T11:22:33.000Z","cwd":"/tmp/pi-sessions/project-v3"}
+{"type":"message","id":"m1","parentId":null,"message":{"role":"user","content":[{"type":"text","text":"First prompt from v3"}]}}
+{"type":"session_info","id":"i1","parentId":"m1","name":"Named v3 session"}
+{"type":"message","id":"m2","parentId":"i1","message":{"role":"assistant","content":"response"}}

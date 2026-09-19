@@ -1,0 +1,59 @@
+#!/bin/sh
+
+# check pi command exists
+command -v pi >/dev/null 2>&1 || {
+  echo "pia: pi not found in PATH" >&2
+  exit 127
+}
+
+# check tmux command exists
+command -v tmux >/dev/null 2>&1 || {
+  echo "pia: tmux not found in PATH" >&2
+  exit 127
+}
+
+case "${TMUX:-}" in
+*/agents,*)
+  exec pi "$@"
+  ;;
+esac
+
+# If continuing, attach to the already-running Pi session if it exists.
+for arg in "$@"; do
+  case "$arg" in
+    -c|--continue)
+      safe="$(printf '%s' "$PWD" | sed 's#^/##; s#[/\\:]#-#g')"
+      dir="$HOME/.pi/agent/sessions/--$safe--"
+
+      file="$(ls -t "$dir"/*.jsonl 2>/dev/null | head -1)"
+
+      if [ -n "$file" ]; then
+        id="${file##*_}"
+        id="${id%.jsonl}"
+
+        if tmux -L agents has-session -t "pi-$id" 2>/dev/null; then
+          exec env -u TMUX tmux -L agents attach-session -t "pi-$id"
+        fi
+      fi
+
+      break
+      ;;
+  esac
+done
+
+# No live matching session: launch Pi normally.
+name="pi-$$"
+
+tmux -L agents new-session \
+  -d \
+  -s "$name" \
+  -c "$PWD" \
+  pi "$@"
+
+tmux -L agents set-option -g status off
+tmux -L agents set-option -g set-titles on
+tmux -L agents set-option -g set-titles-string '#{pane_title}'
+tmux -L agents set-option -g prefix None
+tmux -L agents set-option -g prefix2 None
+
+env -u TMUX tmux -L agents attach-session -t "$name"
