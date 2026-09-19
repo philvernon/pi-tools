@@ -44,11 +44,16 @@ done
 # No live matching session: launch Pi normally.
 name="pi-$$"
 
-tmux -L agents new-session \
-  -d \
-  -s "$name" \
-  -c "$PWD" \
-  pi "$@"
+sid="$(
+  tmux -L agents new-session \
+    -d \
+    -P \
+    -F '#{session_id}' \
+    -s "$name" \
+    -c "$PWD" \
+    pi "$@"
+)"
+
 
 tmux -L agents set-option -g status off
 tmux -L agents set-option -g set-titles on
@@ -56,4 +61,4 @@ tmux -L agents set-option -g set-titles-string '#{pane_title}'
 tmux -L agents set-option -g prefix None
 tmux -L agents set-option -g prefix2 None
 
-env -u TMUX tmux -L agents attach-session -t "$name"
+exec env -u TMUX tmux -L agents attach-session -t "$sid"
