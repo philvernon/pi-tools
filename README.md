@@ -9,6 +9,8 @@ pi-tools/
 ├── bin/
 │   ├── pia
 │   └── tmux
+├── extensions/
+│   └── tmux-session-rename.ts
 ├── lua/
 │   ├── pi-sessions/
 │   └── neo-tree/
@@ -16,7 +18,22 @@ pi-tools/
 └── README.md
 ```
 
-The repository root is a valid Neovim plugin, so lazy.nvim can install the repo directly. The `bin/` directory contains the CLI side of the same session/process workflow.
+The repository root is a valid Neovim plugin, so lazy.nvim can install the repo directly. The `bin/` directory contains the CLI side of the same session/process workflow. The `extensions/` directory contains Pi extensions loaded directly from this repo.
+
+## Pi extensions
+
+Pi can load this repo as a local package:
+
+```json
+{
+  "source": "/path/to/pi-tools",
+  "extensions": [
+    "+extensions/tmux-session-rename.ts"
+  ]
+}
+```
+
+`tmux-session-rename.ts` renames Pi sessions running inside tmux to `pi-<session-id>` so CLI and Neovim session discovery can reconnect to them consistently.
 
 ## CLI
 
