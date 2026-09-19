@@ -38,4 +38,15 @@ local indexed = picker_opts.make_indexed({
 })
 assert(indexed[1].display:find("Named v3 session", 1, true), "Sidekick picker should decorate persisted Pi sessions")
 
+local renamed = picker_opts.make_indexed({
+	{
+		tool = { name = "pi" },
+		session = { mux_session = "pi-session-v3" },
+	},
+})
+assert(
+	renamed[1].display:find("Named v3 session", 1, true),
+	"Sidekick picker should decorate Pi sessions renamed to pi-<session-id>"
+)
+
 print("pi-sessions session tests: ok")

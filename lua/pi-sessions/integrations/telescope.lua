@@ -6,6 +6,7 @@ local function session_titles()
 
 	for _, session in ipairs(require("pi-sessions").all()) do
 		titles[Sidekick.tool_name(session.id)] = session.title
+		titles["pi-" .. session.id] = session.title
 	end
 
 	return titles
