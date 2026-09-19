@@ -23,7 +23,8 @@ for arg in "$@"; do
   case "$arg" in
     -c|--continue)
       safe="$(printf '%s' "$PWD" | sed 's#^/##; s#[/\\:]#-#g')"
-      dir="$HOME/.pi/agent/sessions/--$safe--"
+      root="${PI_CODING_AGENT_SESSION_DIR:-$HOME/.pi/agent/sessions}"
+      dir="$root/--$safe--"
 
       file="$(ls -t "$dir"/*.jsonl 2>/dev/null | head -1)"
 
