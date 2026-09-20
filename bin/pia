@@ -1,19 +1,34 @@
 #!/bin/sh
 
 detach=0
-if [ "${1:-}" = "--detach" ] || [ "${1:-}" = "-d" ]; then
+wait=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --detach|-d)
+      detach=1
+      shift
+      ;;
+    --wait)
+      wait=1
+      shift
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+# Waiting is always detached: the caller must never attach to the worker pane.
+if [ "$wait" -eq 1 ]; then
   detach=1
-  shift
 fi
 
-# check pi command exists
-command -v pi >/dev/null 2>&1 || {
+pi_bin="$(command -v pi 2>/dev/null)" || {
   echo "pia: pi not found in PATH" >&2
   exit 127
 }
 
-# check tmux command exists
-command -v tmux >/dev/null 2>&1 || {
+tmux_bin="$(command -v tmux 2>/dev/null)" || {
   echo "pia: tmux not found in PATH" >&2
   exit 127
 }
@@ -21,7 +36,7 @@ command -v tmux >/dev/null 2>&1 || {
 case "${TMUX:-}" in
 */agents,*)
   if [ "$detach" -eq 0 ]; then
-    exec pi "$@"
+    exec "$pi_bin" "$@"
   fi
   ;;
 esac
@@ -41,8 +56,8 @@ if [ "$detach" -eq 0 ]; then
           id="${file##*_}"
           id="${id%.jsonl}"
 
-          if tmux -L agents has-session -t "pi-$id" 2>/dev/null; then
-            exec env -u TMUX tmux -L agents attach-session -t "pi-$id"
+          if "$tmux_bin" -L agents has-session -t "pi-$id" 2>/dev/null; then
+            exec env -u TMUX "$tmux_bin" -L agents attach-session -t "pi-$id"
           fi
         fi
 
@@ -52,29 +67,187 @@ if [ "$detach" -eq 0 ]; then
   done
 fi
 
-# No live matching session: launch Pi normally.
 name="pi-$$"
 
-sid="$(
-  tmux -L agents new-session \
-    -d \
-    -P \
-    -F '#{session_id}' \
-    -s "$name" \
-    -c "$PWD" \
-    pi "$@"
-)"
+if [ "$wait" -eq 1 ]; then
+  node_bin="$(command -v node 2>/dev/null)" || {
+    echo "pia: node not found; wait mode requires the Pi runtime" >&2
+    exit 127
+  }
 
+  run_root="${PIA_RUN_DIR:-${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/pia-runs}"
+  if ! mkdir -p "$run_root"; then
+    echo "pia: cannot create run directory: $run_root" >&2
+    exit 1
+  fi
 
-tmux -L agents set-option -g status off
-tmux -L agents set-option -g set-titles on
-tmux -L agents set-option -g set-titles-string '#{pane_title}'
-tmux -L agents set-option -g prefix None
-tmux -L agents set-option -g prefix2 None
+  run_dir="$(mktemp -d "$run_root/run.XXXXXX")" || {
+    echo "pia: cannot create per-run directory in: $run_root" >&2
+    exit 1
+  }
+
+  output_file="$run_dir/output.log"
+  status_file="$run_dir/status.json"
+  result_file="$run_dir/result.json"
+  exit_file="$run_dir/exit"
+  writer_file="$run_dir/write-result.cjs"
+
+  cat >"$writer_file" <<'EOF'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const [outputPath, resultPath, statusPath, exitCodeRaw] = process.argv.slice(2);
+const exitCode = Number(exitCodeRaw);
+const events = [];
+
+for (const line of fs.readFileSync(outputPath, "utf8").split(/\r?\n/)) {
+  if (!line.trim()) continue;
+  try {
+    const event = JSON.parse(line);
+    if (event && typeof event === "object") events.push(event);
+  } catch {
+    // The visible stream may also contain non-JSON diagnostics.
+  }
+}
+
+let output = "";
+let error;
+for (let index = events.length - 1; index >= 0; index--) {
+  const message = events[index]?.message;
+  if (!message) continue;
+  if (!error && message.errorMessage) error = message.errorMessage;
+  if (!error && (message.stopReason === "error" || message.stopReason === "aborted")) {
+    error = `Pi stopped with reason: ${message.stopReason}`;
+  }
+  if (!output && message.role === "assistant") {
+    output = (message.content ?? [])
+      .filter((part) => part.type === "text")
+      .map((part) => part.text ?? "")
+      .join("");
+  }
+}
+
+if (exitCode !== 0 && !error) error = `Pi exited with code ${exitCode}`;
+const state = exitCode === 0 && !error ? "complete" : "failed";
+const result = {
+  state,
+  exitCode,
+  output,
+  ...(error ? { error } : {}),
+  runDir: path.dirname(resultPath),
+  outputLog: outputPath,
+};
+
+function atomicWrite(filePath, content) {
+  const temporaryPath = `${filePath}.${process.pid}.tmp`;
+  fs.writeFileSync(temporaryPath, content, { mode: 0o600 });
+  fs.renameSync(temporaryPath, filePath);
+}
+
+atomicWrite(resultPath, `${JSON.stringify(result)}\n`);
+atomicWrite(statusPath, `${JSON.stringify({
+  state,
+  exitCode,
+  result: resultPath,
+})}\n`);
+EOF
+
+  printf '{"state":"running"}\n' >"$status_file"
+
+  # The worker remains in tmux. Its output is both visible in the pane and
+  # written to a durable per-run stream; pia follows the lifecycle files.
+  runner='
+stream_file=$1
+exit_file=$2
+status_file=$3
+result_file=$4
+writer_file=$5
+node_bin=$6
+shift 6
+(
+  "$@"
+  code=$?
+  printf "%s\n" "$code" >"$exit_file"
+  exit "$code"
+) 2>&1 | tee "$stream_file"
+code="$(cat "$exit_file")"
+if ! "$node_bin" "$writer_file" "$stream_file" "$result_file" "$status_file" "$code" >/dev/null 2>&1; then
+  printf "{\"state\":\"failed\",\"exitCode\":%s,\"output\":\"\",\"error\":\"pia could not write result\"}\n" "$code" >"$result_file"
+  printf "{\"state\":\"failed\",\"exitCode\":%s}\n" "$code" >"$status_file"
+fi
+'
+
+  if ! sid="$(
+    "$tmux_bin" -L agents new-session \
+      -d \
+      -P \
+      -F '#{session_id}' \
+      -s "$name" \
+      -c "$PWD" \
+      sh -c "$runner" pia-worker "$output_file" "$exit_file" "$status_file" "$result_file" "$writer_file" "$node_bin" "$pi_bin" "$@"
+  )"; then
+    echo "pia: failed to start tmux worker" >&2
+    exit 1
+  fi
+
+  if [ -z "$sid" ]; then
+    echo "pia: tmux did not return a session ID" >&2
+    exit 1
+  fi
+
+  {
+    printf 'tmux_session=%s\n' "$sid"
+    printf 'output=%s\n' "$output_file"
+    printf 'status=%s\n' "$status_file"
+    printf 'result=%s\n' "$result_file"
+  } >"$run_dir/metadata"
+
+  printf 'pia-run-dir=%s\n' "$run_dir" >&2
+else
+  if ! sid="$(
+    "$tmux_bin" -L agents new-session \
+      -d \
+      -P \
+      -F '#{session_id}' \
+      -s "$name" \
+      -c "$PWD" \
+      "$pi_bin" "$@"
+  )"; then
+    echo "pia: failed to start tmux worker" >&2
+    exit 1
+  fi
+
+  if [ -z "$sid" ]; then
+    echo "pia: tmux did not return a session ID" >&2
+    exit 1
+  fi
+fi
+
+"$tmux_bin" -L agents set-option -g status off
+"$tmux_bin" -L agents set-option -g set-titles on
+"$tmux_bin" -L agents set-option -g set-titles-string '#{pane_title}'
+"$tmux_bin" -L agents set-option -g prefix None
+"$tmux_bin" -L agents set-option -g prefix2 None
+
+if [ "$wait" -eq 1 ]; then
+  while [ ! -f "$result_file" ] || [ ! -f "$status_file" ]; do
+    sleep 0.1
+  done
+
+  cat "$result_file"
+  exit_code="$(cat "$exit_file")"
+  case "$exit_code" in
+    ''|*[!0-9]*)
+      echo "pia: invalid worker exit status" >&2
+      exit 1
+      ;;
+  esac
+  exit "$exit_code"
+fi
 
 if [ "$detach" -eq 1 ]; then
   printf '%s\n' "$sid"
   exit 0
 fi
 
-exec env -u TMUX tmux -L agents attach-session -t "$sid"
+exec env -u TMUX "$tmux_bin" -L agents attach-session -t "$sid"
