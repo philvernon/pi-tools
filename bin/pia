@@ -1,5 +1,11 @@
 #!/bin/sh
 
+detach=0
+if [ "${1:-}" = "--detach" ] || [ "${1:-}" = "-d" ]; then
+  detach=1
+  shift
+fi
+
 # check pi command exists
 command -v pi >/dev/null 2>&1 || {
   echo "pia: pi not found in PATH" >&2
@@ -14,33 +20,37 @@ command -v tmux >/dev/null 2>&1 || {
 
 case "${TMUX:-}" in
 */agents,*)
-  exec pi "$@"
+  if [ "$detach" -eq 0 ]; then
+    exec pi "$@"
+  fi
   ;;
 esac
 
 # If continuing, attach to the already-running Pi session if it exists.
-for arg in "$@"; do
-  case "$arg" in
-    -c|--continue)
-      safe="$(printf '%s' "$PWD" | sed 's#^/##; s#[/\\:]#-#g')"
-      root="${PI_CODING_AGENT_SESSION_DIR:-$HOME/.pi/agent/sessions}"
-      dir="$root/--$safe--"
+if [ "$detach" -eq 0 ]; then
+  for arg in "$@"; do
+    case "$arg" in
+      -c|--continue)
+        safe="$(printf '%s' "$PWD" | sed 's#^/##; s#[/\\:]#-#g')"
+        root="${PI_CODING_AGENT_SESSION_DIR:-$HOME/.pi/agent/sessions}"
+        dir="$root/--$safe--"
 
-      file="$(ls -t "$dir"/*.jsonl 2>/dev/null | head -1)"
+        file="$(ls -t "$dir"/*.jsonl 2>/dev/null | head -1)"
 
-      if [ -n "$file" ]; then
-        id="${file##*_}"
-        id="${id%.jsonl}"
+        if [ -n "$file" ]; then
+          id="${file##*_}"
+          id="${id%.jsonl}"
 
-        if tmux -L agents has-session -t "pi-$id" 2>/dev/null; then
-          exec env -u TMUX tmux -L agents attach-session -t "pi-$id"
+          if tmux -L agents has-session -t "pi-$id" 2>/dev/null; then
+            exec env -u TMUX tmux -L agents attach-session -t "pi-$id"
+          fi
         fi
-      fi
 
-      break
-      ;;
-  esac
-done
+        break
+        ;;
+    esac
+  done
+fi
 
 # No live matching session: launch Pi normally.
 name="pi-$$"
@@ -61,5 +71,10 @@ tmux -L agents set-option -g set-titles on
 tmux -L agents set-option -g set-titles-string '#{pane_title}'
 tmux -L agents set-option -g prefix None
 tmux -L agents set-option -g prefix2 None
+
+if [ "$detach" -eq 1 ]; then
+  printf '%s\n' "$sid"
+  exit 0
+fi
 
 exec env -u TMUX tmux -L agents attach-session -t "$sid"

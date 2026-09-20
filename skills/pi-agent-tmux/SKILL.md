@@ -9,6 +9,8 @@ Use `pia` instead of invoking `pi` directly:
 
 ```sh
 pia
+pia --detach
+pia -d
 pia --continue
 pia --session /path/to/session.jsonl
 ```

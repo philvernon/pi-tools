@@ -39,7 +39,7 @@ Pi can load this repo as a local package:
 
 ### `pia`
 
-`pia` launches Pi inside the dedicated `agents` tmux server. When invoked with `-c` or `--continue`, it attempts to attach to the already-running tmux session corresponding to the latest Pi session for the current working directory before starting a new process.
+`pia` launches Pi inside the dedicated `agents` tmux server. When invoked with `-c` or `--continue`, it attempts to attach to the already-running tmux session corresponding to the latest Pi session for the current working directory before starting a new process. `pia --detach` (or `pia -d`) starts a new session without attaching and prints its tmux session ID.
 
 Install it somewhere already on your shell PATH, for example:
 
